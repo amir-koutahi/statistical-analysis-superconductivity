@@ -1,0 +1,702 @@
+---
+title: "Analysis of Factors Associated with
+Superconductor Critical Temperatures"
+author: "Amir Koutahi, Canberk Soytekin, Andrew Hongyi Wu, Bruce Kaiyuan Chen"
+date: ""
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Description
+
+This R Markdown document presents a complete regression-based statistical analysis of superconducting materials using the dataset `Cleaned_Data.csv`. The purpose of the analysis is to investigate how selected material characteristics are associated with superconducting critical temperature, with particular attention to compounds containing both copper (Cu) and oxygen (O), since these are especially relevant in the study of high-temperature superconductors. The document is written to provide a full workflow, beginning with data preparation and ending with model interpretation and diagnostic assessment.
+
+The analysis begins by importing the dataset and restricting attention to observations whose chemical formula information includes both Cu and O. To focus the study on the most relevant high-temperature materials, the data are then ordered by decreasing critical temperature and only the top 1000 observations are retained. After this filtering step, the variable `range_Valence` is converted to a categorical factor with levels 1 through 5, and a transformed response variable, `log_Tc = log(critical_temp + 1)`, is created. This log transformation is introduced to reduce skewness, stabilize variance, and improve the suitability of the data for linear modeling.
+
+Once the data are prepared, the document constructs a reduced working dataset containing the response and predictor variables of interest: `critical_temp`, `log_Tc`, `wtd_entropy_Valence`, `mean_ElectronAffinity`, `wtd_gmean_atomic_radius`, `mean_ThermalConductivity`, and `range_Valence`. Missing observations are removed so that all subsequent analyses are performed on a complete-case dataset. The script also reports the final number of observations used, ensuring transparency about the effective sample size.
+
+The next stage of the document provides descriptive statistics for the main quantitative variables, including means, standard deviations, minima, and maxima. These summaries give an overall numerical picture of the filtered sample before modeling begins. In addition, the script visually compares the distribution of the original response variable `critical_temp` with the transformed response `log_Tc` using histograms and normal Q-Q plots. This step is important because it motivates whether a transformation of the response leads to a more appropriate modeling framework.
+
+The core modeling section compares two multiple linear regression models: one using the raw response `critical_temp`, and another using the transformed response `log_Tc`. Both models include the same explanatory variables, namely weighted entropy of valence, mean electron affinity, weighted geometric mean atomic radius, mean thermal conductivity, and the categorical variable `range_Valence`. For each model, the output includes the full regression summary as well as several model quality measures such as AIC, BIC, \(R^2\), adjusted \(R^2\), and residual standard error. Diagnostic plots are also generated for both models. This comparison is used to determine whether the transformed-response model provides a better statistical fit and better satisfies regression assumptions.
+
+After selecting the log-response model as the main modeling framework, the document treats this as the full model and studies it in more detail. The full model summary is reported, along with both the standard ANOVA table and a Type II ANOVA table. These outputs allow assessment of the contribution of each predictor while accounting for the others. The analysis is designed not only to identify statistically significant variables but also to compare their relative importance within the fitted model.
+
+To further evaluate the necessity of each predictor, the document carries out a series of partial F-tests. In each case, one predictor is removed from the full model and the reduced model is compared to the full one. Separate reduced models are created for removing `wtd_entropy_Valence`, `mean_ElectronAffinity`, `wtd_gmean_atomic_radius`, `mean_ThermalConductivity`, and `range_Valence`. The results are summarized in a table containing degrees of freedom, sums of squares, F-statistics, and p-values. This part of the analysis provides a formal test of whether each variable contributes meaningfully to explaining variation in the response.
+
+The script then applies AIC-based model selection using backward elimination through `stepAIC`. This procedure starts from the full log-response model and removes predictors when doing so improves the Akaike Information Criterion. The selected model is then summarized and compared with the full model and several reduced candidate models using AIC, BIC, \(R^2\), and adjusted \(R^2\). This step offers a balance between explanatory power and model simplicity, allowing the final model choice to be justified from a model-selection perspective rather than only from individual p-values.
+
+An additional part of the analysis examines multicollinearity among the quantitative predictors. A correlation matrix is computed for the numerical explanatory variables, and variance inflation factors (VIFs) are calculated for the full model. These checks are included to determine whether strong linear relationships among predictors may be inflating uncertainty in coefficient estimates or complicating interpretation.
+
+The document also includes a detailed influence and outlier analysis. Several standard regression diagnostics are computed, including standardized residuals, studentized residuals, leverage values, Cook’s distance, and DFFITS. Practical cutoffs are defined for each of these influence measures, and observations exceeding these thresholds are flagged. A table of flagged observations is produced, and counts are reported for each type of diagnostic flag. In addition, several influence-related plots are generated, including residual plots, leverage plots, Cook’s distance plots, and an influence plot where point size reflects Cook’s distance. This section is important because unusual or highly influential observations can strongly affect regression results and may distort conclusions if left unchecked.
+
+To assess sensitivity of the analysis to influential observations, the document identifies especially problematic points and refits the full model after removing them. The refitted model is summarized and compared against the original full model using sample size, AIC, BIC, \(R^2\), adjusted \(R^2\), and residual standard error. This sensitivity analysis helps determine whether the main conclusions are robust or overly dependent on a small subset of influential cases.
+
+The final chosen model is then taken to be the AIC-selected model. For this final model, the document reports the regression summary, a Type II ANOVA table, standard regression diagnostic plots, a coefficient table with 95% confidence intervals, and a table of overall model performance measures. These include \(R^2\), adjusted \(R^2\), residual standard error, AIC, BIC, the overall F-statistic, the overall model p-value, and the sample size. Together, these outputs provide a concise but complete statistical summary of the selected model.
+
+Because the final response variable is on the log scale, the document also includes a back-transformed effect table. This table converts coefficient estimates into multiplicative effects on `Tc + 1` and corresponding percentage changes, which makes the results easier to interpret in practical terms. A separate interpretation helper table is also produced to summarize the direction of each effect and whether it is statistically significant at the 5% level. This is useful for translating technical regression output into conclusions that are easier to discuss in a written report.
+
+Finally, the script reports a residual summary for the final model, including the minimum, first quartile, median, mean, third quartile, and maximum residual. This provides one more compact check of model behavior and helps support the diagnostic assessment given earlier.
+
+Overall, this R Markdown file is designed to function as a full statistical analysis pipeline. It includes data filtering, exploratory summaries, transformation assessment, model fitting, hypothesis testing, model comparison, multicollinearity checks, influence diagnostics, sensitivity analysis, final model selection, and practical interpretation of results. Its goal is not only to fit a model, but also to justify that model carefully and evaluate whether its conclusions are statistically reliable and substantively meaningful in the context of superconducting materials.
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(car)
+library(MASS)
+
+
+```{r}
+
+options(scipen = 999)
+
+df <- read.csv("Cleaned_Data.csv", stringsAsFactors = FALSE)
+
+df <- df[grepl("Cu", df$CJ) & grepl("O", df$CJ), ]
+df <- df[order(df$critical_temp, decreasing = TRUE), ][1:1000, ]
+
+df$range_Valence <- factor(df$range_Valence, levels = 1:5)
+df$log_Tc <- log(df$critical_temp + 1)
+
+vars_needed <- c(
+  "critical_temp",
+  "log_Tc",
+  "wtd_entropy_Valence",
+  "mean_ElectronAffinity",
+  "wtd_gmean_atomic_radius",
+  "mean_ThermalConductivity",
+  "range_Valence"
+)
+
+df <- df[, vars_needed]
+df <- na.omit(df)
+
+cat("Number of observations used:", nrow(df), "\n\n")
+
+
+# 2. Summary statistics
+
+summary_stats <- data.frame(
+  Variable = c(
+    "critical_temp",
+    "log_Tc",
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity"
+  ),
+  Mean = sapply(df[, c(
+    "critical_temp",
+    "log_Tc",
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity"
+  )], mean),
+  SD = sapply(df[, c(
+    "critical_temp",
+    "log_Tc",
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity"
+  )], sd),
+  Min = sapply(df[, c(
+    "critical_temp",
+    "log_Tc",
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity"
+  )], min),
+  Max = sapply(df[, c(
+    "critical_temp",
+    "log_Tc",
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity"
+  )], max)
+)
+
+summary_stats[, -1] <- round(summary_stats[, -1], 4)
+
+cat("SUMMARY STATISTICS\n")
+print(summary_stats)
+cat("\n")
+
+
+# Transformation check
+
+par(mfrow = c(2, 2))
+hist(df$critical_temp, main = "critical_temp", xlab = "critical_temp")
+qqnorm(df$critical_temp, main = "QQ plot: critical_temp")
+qqline(df$critical_temp)
+
+hist(df$log_Tc, main = "log(Tc + 1)", xlab = "log_Tc")
+qqnorm(df$log_Tc, main = "QQ plot: log(Tc + 1)")
+qqline(df$log_Tc)
+
+
+# Raw vs log-response models
+
+fit_raw <- lm(
+  critical_temp ~
+    wtd_entropy_Valence +
+    mean_ElectronAffinity +
+    wtd_gmean_atomic_radius +
+    mean_ThermalConductivity +
+    range_Valence,
+  data = df
+)
+
+fit_log <- lm(
+  log_Tc ~
+    wtd_entropy_Valence +
+    mean_ElectronAffinity +
+    wtd_gmean_atomic_radius +
+    mean_ThermalConductivity +
+    range_Valence,
+  data = df
+)
+
+cat("RAW RESPONSE MODEL\n")
+print(summary(fit_raw))
+cat("\nAIC raw model:", AIC(fit_raw), "\n")
+cat("BIC raw model:", BIC(fit_raw), "\n")
+cat("Adjusted R-squared raw model:", summary(fit_raw)$adj.r.squared, "\n\n")
+
+cat("LOG RESPONSE MODEL\n")
+print(summary(fit_log))
+cat("\nAIC log model:", AIC(fit_log), "\n")
+cat("BIC log model:", BIC(fit_log), "\n")
+cat("Adjusted R-squared log model:", summary(fit_log)$adj.r.squared, "\n\n")
+
+transformation_comparison <- data.frame(
+  Model = c("Raw response", "Log response"),
+  AIC = c(AIC(fit_raw), AIC(fit_log)),
+  BIC = c(BIC(fit_raw), BIC(fit_log)),
+  R_squared = c(summary(fit_raw)$r.squared, summary(fit_log)$r.squared),
+  Adj_R_squared = c(summary(fit_raw)$adj.r.squared, summary(fit_log)$adj.r.squared),
+  Residual_SE = c(summary(fit_raw)$sigma, summary(fit_log)$sigma)
+)
+transformation_comparison[, -1] <- round(transformation_comparison[, -1], 4)
+
+cat("TRANSFORMATION COMPARISON\n")
+print(transformation_comparison)
+cat("\n")
+
+par(mfrow = c(2, 2))
+plot(fit_raw, which = 1:4)
+
+par(mfrow = c(2, 2))
+plot(fit_log, which = 1:4)
+
+
+# Full model
+
+fit_full <- fit_log
+
+cat("FULL MODEL SUMMARY\n")
+print(summary(fit_full))
+cat("\nFULL MODEL ANOVA\n")
+print(anova(fit_full))
+cat("\nType II ANOVA\n")
+print(Anova(fit_full, type = 2))
+cat("\nR-squared:", summary(fit_full)$r.squared, "\n")
+cat("Adjusted R-squared:", summary(fit_full)$adj.r.squared, "\n")
+cat("AIC:", AIC(fit_full), "\n")
+cat("BIC:", BIC(fit_full), "\n\n")
+
+
+# Partial F tests
+
+fit_no_entropy <- lm(
+  log_Tc ~ mean_ElectronAffinity + wtd_gmean_atomic_radius +
+    mean_ThermalConductivity + range_Valence,
+  data = df
+)
+
+fit_no_affinity <- lm(
+  log_Tc ~ wtd_entropy_Valence + wtd_gmean_atomic_radius +
+    mean_ThermalConductivity + range_Valence,
+  data = df
+)
+
+fit_no_radius <- lm(
+  log_Tc ~ wtd_entropy_Valence + mean_ElectronAffinity +
+    mean_ThermalConductivity + range_Valence,
+  data = df
+)
+
+fit_no_thermal <- lm(
+  log_Tc ~ wtd_entropy_Valence + mean_ElectronAffinity +
+    wtd_gmean_atomic_radius + range_Valence,
+  data = df
+)
+
+fit_no_range <- lm(
+  log_Tc ~ wtd_entropy_Valence + mean_ElectronAffinity +
+    wtd_gmean_atomic_radius + mean_ThermalConductivity,
+  data = df
+)
+
+cat("PARTIAL F TEST: remove wtd_entropy_Valence\n")
+pf_entropy <- anova(fit_no_entropy, fit_full)
+print(pf_entropy)
+cat("\n")
+
+cat("PARTIAL F TEST: remove mean_ElectronAffinity\n")
+pf_affinity <- anova(fit_no_affinity, fit_full)
+print(pf_affinity)
+cat("\n")
+
+cat("PARTIAL F TEST: remove wtd_gmean_atomic_radius\n")
+pf_radius <- anova(fit_no_radius, fit_full)
+print(pf_radius)
+cat("\n")
+
+cat("PARTIAL F TEST: remove mean_ThermalConductivity\n")
+pf_thermal <- anova(fit_no_thermal, fit_full)
+print(pf_thermal)
+cat("\n")
+
+cat("PARTIAL F TEST: remove range_Valence\n")
+pf_range <- anova(fit_no_range, fit_full)
+print(pf_range)
+cat("\n")
+
+partial_f_summary <- data.frame(
+  Removed_Term = c(
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity",
+    "range_Valence"
+  ),
+  Df = c(
+    pf_entropy$Df[2],
+    pf_affinity$Df[2],
+    pf_radius$Df[2],
+    pf_thermal$Df[2],
+    pf_range$Df[2]
+  ),
+  Sum_of_Sq = c(
+    pf_entropy$`Sum of Sq`[2],
+    pf_affinity$`Sum of Sq`[2],
+    pf_radius$`Sum of Sq`[2],
+    pf_thermal$`Sum of Sq`[2],
+    pf_range$`Sum of Sq`[2]
+  ),
+  F_value = c(
+    pf_entropy$F[2],
+    pf_affinity$F[2],
+    pf_radius$F[2],
+    pf_thermal$F[2],
+    pf_range$F[2]
+  ),
+  P_value = c(
+    pf_entropy$`Pr(>F)`[2],
+    pf_affinity$`Pr(>F)`[2],
+    pf_radius$`Pr(>F)`[2],
+    pf_thermal$`Pr(>F)`[2],
+    pf_range$`Pr(>F)`[2]
+  )
+)
+
+partial_f_summary[, -1] <- lapply(partial_f_summary[, -1], function(x) round(x, 6))
+cat("PARTIAL F TEST SUMMARY TABLE\n")
+print(partial_f_summary)
+cat("\n")
+
+
+# 7. AIC model selection
+
+fit_scope <- lm(
+  log_Tc ~
+    wtd_entropy_Valence +
+    mean_ElectronAffinity +
+    wtd_gmean_atomic_radius +
+    mean_ThermalConductivity +
+    range_Valence,
+  data = df
+)
+
+fit_aic_backward <- stepAIC(fit_scope, direction = "backward", trace = TRUE)
+
+cat("\nAIC-SELECTED MODEL SUMMARY\n")
+print(summary(fit_aic_backward))
+cat("\nAIC of selected model:", AIC(fit_aic_backward), "\n")
+cat("BIC of selected model:", BIC(fit_aic_backward), "\n")
+cat("Adjusted R-squared of selected model:", summary(fit_aic_backward)$adj.r.squared, "\n\n")
+
+
+# Compare candidate models
+
+model_comparison <- data.frame(
+  Model = c(
+    "Full model",
+    "No entropy",
+    "No affinity",
+    "No radius",
+    "No thermal",
+    "No range",
+    "AIC selected"
+  ),
+  AIC = c(
+    AIC(fit_full),
+    AIC(fit_no_entropy),
+    AIC(fit_no_affinity),
+    AIC(fit_no_radius),
+    AIC(fit_no_thermal),
+    AIC(fit_no_range),
+    AIC(fit_aic_backward)
+  ),
+  BIC = c(
+    BIC(fit_full),
+    BIC(fit_no_entropy),
+    BIC(fit_no_affinity),
+    BIC(fit_no_radius),
+    BIC(fit_no_thermal),
+    BIC(fit_no_range),
+    BIC(fit_aic_backward)
+  ),
+  R_squared = c(
+    summary(fit_full)$r.squared,
+    summary(fit_no_entropy)$r.squared,
+    summary(fit_no_affinity)$r.squared,
+    summary(fit_no_radius)$r.squared,
+    summary(fit_no_thermal)$r.squared,
+    summary(fit_no_range)$r.squared,
+    summary(fit_aic_backward)$r.squared
+  ),
+  Adj_R_squared = c(
+    summary(fit_full)$adj.r.squared,
+    summary(fit_no_entropy)$adj.r.squared,
+    summary(fit_no_affinity)$adj.r.squared,
+    summary(fit_no_radius)$adj.r.squared,
+    summary(fit_no_thermal)$adj.r.squared,
+    summary(fit_no_range)$adj.r.squared,
+    summary(fit_aic_backward)$adj.r.squared
+  )
+)
+
+model_comparison[, -1] <- round(model_comparison[, -1], 4)
+
+cat("MODEL COMPARISON TABLE\n")
+print(model_comparison)
+cat("\n")
+
+
+# 9. Multicollinearity
+
+num_vars <- df[, c(
+  "wtd_entropy_Valence",
+  "mean_ElectronAffinity",
+  "wtd_gmean_atomic_radius",
+  "mean_ThermalConductivity"
+)]
+
+cat("CORRELATION MATRIX\n")
+print(round(cor(num_vars), 3))
+cat("\n")
+
+cat("VIF VALUES\n")
+print(vif(fit_full))
+cat("\n")
+
+
+# Outliers / leverage / influence
+
+n <- nrow(df)
+p <- length(coef(fit_full))
+
+std_resid <- rstandard(fit_full)
+stud_resid <- rstudent(fit_full)
+lev <- hatvalues(fit_full)
+cooks <- cooks.distance(fit_full)
+dffits_vals <- dffits(fit_full)
+
+lev_cutoff <- 2 * p / n
+cook_cutoff <- 4 / n
+dffits_cutoff <- 2 * sqrt(p / n)
+
+influence_table <- data.frame(
+  Index = 1:n,
+  Fitted = fitted(fit_full),
+  Residual = resid(fit_full),
+  Std_Resid = std_resid,
+  Stud_Resid = stud_resid,
+  Leverage = lev,
+  CooksD = cooks,
+  DFFITS = dffits_vals
+)
+
+influence_table$Outlier_Flag <- abs(influence_table$Stud_Resid) > 3
+influence_table$Leverage_Flag <- influence_table$Leverage > lev_cutoff
+influence_table$Cook_Flag <- influence_table$CooksD > cook_cutoff
+influence_table$DFFITS_Flag <- abs(influence_table$DFFITS) > dffits_cutoff
+
+flagged <- influence_table %>%
+  filter(Outlier_Flag | Leverage_Flag | Cook_Flag | DFFITS_Flag)
+
+cat("INFLUENCE CUT-OFFS\n")
+cat("Leverage cutoff:", lev_cutoff, "\n")
+cat("Cook's distance cutoff:", cook_cutoff, "\n")
+cat("DFFITS cutoff:", dffits_cutoff, "\n\n")
+
+cat("NUMBER OF FLAGGED OBSERVATIONS:", nrow(flagged), "\n\n")
+
+if (nrow(flagged) > 0) {
+  flagged <- flagged[order(-flagged$CooksD), ]
+  cat("TOP FLAGGED OBSERVATIONS\n")
+  print(head(flagged, 20))
+  cat("\n")
+}
+
+# Additional summary for writeup
+influence_counts <- data.frame(
+  Metric = c("Outlier_Flag", "Leverage_Flag", "Cook_Flag", "DFFITS_Flag"),
+  Count = c(
+    sum(influence_table$Outlier_Flag),
+    sum(influence_table$Leverage_Flag),
+    sum(influence_table$Cook_Flag),
+    sum(influence_table$DFFITS_Flag)
+  )
+)
+
+cat("INFLUENCE FLAG COUNTS\n")
+print(influence_counts)
+cat("\n")
+
+
+# Influence plots
+
+par(mfrow = c(2, 2))
+
+plot(fitted(fit_full), rstudent(fit_full),
+     xlab = "Fitted values", ylab = "Studentized residuals",
+     main = "Studentized residuals vs fitted")
+abline(h = c(-3, 0, 3), lty = c(2, 1, 2))
+
+plot(lev, type = "h", main = "Leverage values", ylab = "Leverage")
+abline(h = lev_cutoff, lty = 2)
+
+plot(cooks, type = "h", main = "Cook's distance", ylab = "Cook's D")
+abline(h = cook_cutoff, lty = 2)
+
+influencePlot(fit_full, main = "Influence Plot", sub = "Circle size proportional to Cook's distance")
+
+
+# refit after removing strongest problematic points
+
+remove_idx <- flagged %>%
+  filter(Cook_Flag & (Outlier_Flag | Leverage_Flag)) %>%
+  pull(Index)
+
+cat("INDICES TO CONSIDER REMOVING\n")
+print(remove_idx)
+cat("\n")
+
+fit_full_clean <- NULL
+
+if (length(remove_idx) > 0) {
+  df_clean <- df[-remove_idx, ]
+  
+  fit_full_clean <- lm(
+    log_Tc ~
+      wtd_entropy_Valence +
+      mean_ElectronAffinity +
+      wtd_gmean_atomic_radius +
+      mean_ThermalConductivity +
+      range_Valence,
+    data = df_clean
+  )
+  
+  cat("REFIT MODEL AFTER REMOVAL\n")
+  print(summary(fit_full_clean))
+  cat("\nAIC cleaned model:", AIC(fit_full_clean), "\n")
+  cat("BIC cleaned model:", BIC(fit_full_clean), "\n")
+  cat("Adjusted R-squared cleaned model:", summary(fit_full_clean)$adj.r.squared, "\n\n")
+  
+  par(mfrow = c(2, 2))
+  plot(fit_full_clean, which = 1:4)
+  
+  sensitivity_comparison <- data.frame(
+    Model = c("Original full model", "Refit after removing flagged points"),
+    N = c(nrow(df), nrow(df_clean)),
+    AIC = c(AIC(fit_full), AIC(fit_full_clean)),
+    BIC = c(BIC(fit_full), BIC(fit_full_clean)),
+    R_squared = c(summary(fit_full)$r.squared, summary(fit_full_clean)$r.squared),
+    Adj_R_squared = c(summary(fit_full)$adj.r.squared, summary(fit_full_clean)$adj.r.squared),
+    Residual_SE = c(summary(fit_full)$sigma, summary(fit_full_clean)$sigma)
+  )
+  
+  sensitivity_comparison[, -1] <- round(sensitivity_comparison[, -1], 4)
+  
+  cat("SENSITIVITY COMPARISON TABLE\n")
+  print(sensitivity_comparison)
+  cat("\n")
+}
+
+
+# Final model diagnostics
+
+fit_final <- fit_aic_backward
+
+cat("FINAL CHOSEN MODEL\n")
+print(summary(fit_final))
+cat("\nFINAL MODEL TYPE II ANOVA\n")
+print(Anova(fit_final, type = 2))
+cat("\n")
+
+par(mfrow = c(2, 2))
+plot(fit_final, which = 1:4)
+
+
+# Final model coefficient table
+
+coef_mat <- summary(fit_final)$coefficients
+ci_mat <- confint(fit_final)
+
+final_model_table <- data.frame(
+  Term = rownames(coef_mat),
+  Estimate = coef_mat[, "Estimate"],
+  Std_Error = coef_mat[, "Std. Error"],
+  t_value = coef_mat[, "t value"],
+  p_value = coef_mat[, "Pr(>|t|)"],
+  CI_Lower_95 = ci_mat[, 1],
+  CI_Upper_95 = ci_mat[, 2],
+  row.names = NULL
+)
+
+final_model_table[, -1] <- lapply(final_model_table[, -1], function(x) round(x, 6))
+
+cat("FINAL MODEL COEFFICIENT TABLE\n")
+print(final_model_table)
+cat("\n")
+
+
+# Final model performance metrics
+
+final_metrics <- data.frame(
+  Metric = c(
+    "R-squared",
+    "Adjusted R-squared",
+    "Residual standard error",
+    "AIC",
+    "BIC",
+    "F-statistic",
+    "Model p-value",
+    "Sample size"
+  ),
+  Value = c(
+    summary(fit_final)$r.squared,
+    summary(fit_final)$adj.r.squared,
+    summary(fit_final)$sigma,
+    AIC(fit_final),
+    BIC(fit_final),
+    unname(summary(fit_final)$fstatistic[1]),
+    pf(
+      summary(fit_final)$fstatistic[1],
+      summary(fit_final)$fstatistic[2],
+      summary(fit_final)$fstatistic[3],
+      lower.tail = FALSE
+    ),
+    nobs(fit_final)
+  )
+)
+
+final_metrics$Value <- round(final_metrics$Value, 6)
+
+cat("FINAL MODEL PERFORMANCE METRICS\n")
+print(final_metrics)
+cat("\n")
+
+
+# Back-transformed effect multipliers
+#     For log(Tc + 1), exp(beta) is the
+#     multiplicative change in (Tc + 1)
+#     for a 1-unit increase in predictor
+
+effect_table <- data.frame(
+  Term = rownames(coef_mat),
+  Estimate = coef_mat[, "Estimate"],
+  Multiplier_on_Tc_plus_1 = exp(coef_mat[, "Estimate"]),
+  Percent_Change_in_Tc_plus_1 = 100 * (exp(coef_mat[, "Estimate"]) - 1),
+  row.names = NULL
+)
+
+effect_table[, -1] <- lapply(effect_table[, -1], function(x) round(x, 6))
+
+cat("BACK-TRANSFORMED EFFECT TABLE\n")
+print(effect_table)
+cat("\n")
+
+
+# 17. Human-readable interpretation helper
+
+interpretation_table <- data.frame(
+  Term = c(
+    "wtd_entropy_Valence",
+    "mean_ElectronAffinity",
+    "wtd_gmean_atomic_radius",
+    "mean_ThermalConductivity",
+    "range_Valence2",
+    "range_Valence3",
+    "range_Valence4",
+    "range_Valence5"
+  ),
+  Direction = c(
+    ifelse(coef(fit_final)["wtd_entropy_Valence"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["mean_ElectronAffinity"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["wtd_gmean_atomic_radius"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["mean_ThermalConductivity"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["range_Valence2"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["range_Valence3"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["range_Valence4"] > 0, "Positive", "Negative"),
+    ifelse(coef(fit_final)["range_Valence5"] > 0, "Positive", "Negative")
+  ),
+  Significant_5pct = c(
+    coef_mat["wtd_entropy_Valence", "Pr(>|t|)"] < 0.05,
+    coef_mat["mean_ElectronAffinity", "Pr(>|t|)"] < 0.05,
+    coef_mat["wtd_gmean_atomic_radius", "Pr(>|t|)"] < 0.05,
+    coef_mat["mean_ThermalConductivity", "Pr(>|t|)"] < 0.05,
+    coef_mat["range_Valence2", "Pr(>|t|)"] < 0.05,
+    coef_mat["range_Valence3", "Pr(>|t|)"] < 0.05,
+    coef_mat["range_Valence4", "Pr(>|t|)"] < 0.05,
+    coef_mat["range_Valence5", "Pr(>|t|)"] < 0.05
+  )
+)
+
+cat("INTERPRETATION HELPER TABLE\n")
+print(interpretation_table)
+cat("\n")
+
+
+# Residual summaries for final writeup
+
+resid_summary <- data.frame(
+  Statistic = c("Min", "Q1", "Median", "Mean", "Q3", "Max"),
+  Residual = round(c(
+    min(resid(fit_final)),
+    quantile(resid(fit_final), 0.25),
+    median(resid(fit_final)),
+    mean(resid(fit_final)),
+    quantile(resid(fit_final), 0.75),
+    max(resid(fit_final))
+  ), 6),
+  row.names = NULL
+)
+
+cat("FINAL MODEL RESIDUAL SUMMARY\n")
+print(resid_summary)
+cat("\n")
+
+
+```
+
